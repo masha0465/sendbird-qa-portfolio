@@ -1,0 +1,138 @@
+# Sendbird QA Portfolio - CI/CD Pipeline
+# API Tests (Playwright) + SDK Tests (Cypress)
+
+name: Sendbird QA Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  # 수동 실행 가능
+  workflow_dispatch:
+
+env:
+  SENDBIRD_APP_ID: ${{ secrets.SENDBIRD_APP_ID }}
+  SENDBIRD_API_TOKEN: ${{ secrets.SENDBIRD_API_TOKEN }}
+
+jobs:
+  # ============================================
+  # Job 1: Platform API Tests (Playwright)
+  # ============================================
+  api-tests:
+    name: Platform API Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: api-tests/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./api-tests
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ./api-tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run API tests
+        working-directory: ./api-tests
+        run: npx playwright test
+        env:
+          SENDBIRD_APP_ID: ${{ secrets.SENDBIRD_APP_ID }}
+          SENDBIRD_API_TOKEN: ${{ secrets.SENDBIRD_API_TOKEN }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-test-results
+          path: |
+            api-tests/playwright-report/
+            api-tests/test-results/
+          retention-days: 30
+
+  # ============================================
+  # Job 2: JavaScript SDK Tests (Cypress)
+  # ============================================
+  sdk-tests:
+    name: JavaScript SDK Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sdk-tests/javascript/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./sdk-tests/javascript
+        run: npm ci
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          working-directory: ./sdk-tests/javascript
+          browser: chrome
+          headless: true
+        env:
+          CYPRESS_SENDBIRD_APP_ID: ${{ secrets.SENDBIRD_APP_ID }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdk-test-results
+          path: |
+            sdk-tests/javascript/cypress/screenshots/
+            sdk-tests/javascript/cypress/videos/
+          retention-days: 30
+
+  # ============================================
+  # Job 3: Test Summary Report
+  # ============================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [api-tests, sdk-tests]
+    if: always()
+    
+    steps:
+      - name: Download API test results
+        uses: actions/download-artifact@v4
+        with:
+          name: api-test-results
+          path: ./api-results
+        continue-on-error: true
+
+      - name: Download SDK test results
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-test-results
+          path: ./sdk-results
+        continue-on-error: true
+
+      - name: Generate summary
+        run: |
+          echo "## Sendbird QA Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform API Tests (80 TC) | ${{ needs.api-tests.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JavaScript SDK Tests (22 TC) | ${{ needs.sdk-tests.result == 'success' && '✅ Pass' || '❌ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total: 102 Test Cases**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📅 Run Date: $(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
